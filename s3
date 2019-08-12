@@ -1,4 +1,4 @@
-#!/usr/bin/python -u
+#!/usr/bin/python3 -u
 # Copyright (C) 2014 Bashton Ltd
 #
 # This program is free software: you can redistribute it and/or modify
@@ -16,25 +16,26 @@
 #
 # https://github.com/BashtonLtd/apt-transport-s3
 
-import urllib2
-import urlparse
-import time
+import datetime
 import hashlib
 import hmac
 import json
-import sys
+import logging
 import os
-import datetime
-import xml.etree.ElementTree as ET
 import socket
 import ssl
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
+
 from configobj import ConfigObj
 
-RETRIES = 5
-
-
-def wait_time(c):
-    return pow(2, c) - 1
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                    filename="/tmp/apt-transport-s3.out",
+                    level=logging.DEBUG)
 
 RETRIES = 5
 
@@ -50,33 +51,34 @@ class AWSCredentials(object):
     """
 
     def __init__(self, config_file=None):
+        self.logging = logging
         self.conf_file = config_file
         host = 'http://169.254.169.254'
         path = '/latest/meta-data/iam/security-credentials/'
-        self.meta_data_uri = urlparse.urljoin(host, path)
+        self.meta_data_uri = urllib.parse.urljoin(host, path)
 
     def __get_role(self):
         # Read IAM role from AWS metadata store
-        request = urllib2.Request(self.meta_data_uri)
+        request = urllib.request.Request(self.meta_data_uri)
 
         response = None
 
         for i in range(0, RETRIES):
             try:
-                response = urllib2.urlopen(request, None, 10)
+                response = urllib.request.urlopen(request, None, 10)
                 self.iamrole = response.read()
                 break
             except ssl.SSLError as e:
                 if 'timed out' in e.message:
                     time.sleep(wait_time(i + 1))
                 else:
-                    raise e
+                    #raise e
+                    raise Exception("chuy111 %s" % e)
             except socket.timeout:
                 time.sleep(wait_time(i + 1))
-            except urllib2.URLError as e:
+            except urllib.error.URLError as e:
                 if hasattr(e, 'reason'):
-                    raise Exception("URL error reason: %s, probable cause is that\
-     you don't have IAM role on this machine" % e.reason)
+                    raise Exception("URL error reason: %s, probable cause is that you don't have IAM role on this machine" % e.reason)
                 elif hasattr(e, 'code'):
                     raise Exception("Server error code: %s" % e.code)
             finally:
@@ -131,25 +133,26 @@ class AWSCredentials(object):
 
         if data.get("AccessKeyId") is None:
             self.__get_role()
-            request = urllib2.Request(
-                urlparse.urljoin(self.meta_data_uri, self.iamrole)
+            request = urllib.request.Request(
+                urllib.parse.urljoin(self.meta_data_uri, self.iamrole)
             )
 
             response = None
 
             for i in range(0, RETRIES):
                 try:
-                    response = urllib2.urlopen(request, None, 30)
+                    response = urllib.request.urlopen(request, None, 30)
                     data = json.loads(response.read())
                     break
                 except ssl.SSLError as e:
                     if 'timed out' in e.message:
                         time.sleep(wait_time(i + 1))
                     else:
-                        raise e
+                        #raise e
+                        raise Exception("chuy2222: %s" % e)
                 except socket.timeout:
                     time.sleep(wait_time(i + 1))
-                except urllib2.URLError as e:
+                except urllib.error.URLError as e:
                     if hasattr(e, 'reason'):
                         raise Exception("URL error reason: %s" % e.reason)
                     elif hasattr(e, 'code'):
@@ -183,8 +186,8 @@ class AWSCredentials(object):
     def uriopen(self, uri):
         """uriopen(uri) open the remote file and return a file object."""
         try:
-            return urllib2.urlopen(self._request(uri), None, 30)
-        except urllib2.HTTPError as e:
+            return urllib.request.urlopen(self._request(uri), None, 30)
+        except urllib.error.HTTPError as e:
             # HTTPError is a "file like object" similar to what
             # urllib2.urlopen returns, so return it and let caller
             # deal with the error code
@@ -192,22 +195,22 @@ class AWSCredentials(object):
                 # token errors are buried in 400 messages so expose
                 xmlResponse = ET.fromstring(e.read())
                 if xmlResponse is not None:
-                    e.msg = "{} - {}".format(e, xmlResponse.find("Message").text)
+                    e.msg = "chuy333 {} - {}".format(e, xmlResponse.find("Message").text)
             if e.code == 301:
                 e.msg = "{} - Set s3auth.conf region to match bucket 'Region': bucket may not be in {}".format(e, self.region)
 
             return e
         # For other errors, throw an exception directly
-        except urllib2.URLError as e:
+        except urllib.error.URLError as e:
             if hasattr(e, 'reason'):
                 raise Exception("URL error reason: %s" % e.reason)
             elif hasattr(e, 'code'):
                 raise Exception("Server error code: %s" % e.code)
-        except urllib2.socket.timeout:
+        except socket.timeout:
             raise Exception("Socket timeout")
 
     def _request(self, uri):
-        uri_parsed = urlparse.urlparse(uri)
+        uri_parsed = urllib.parse.urlparse(uri)
         if uri_parsed.netloc.endswith(".amazonaws.com"):
             raise Exception( "uri '{}' should not include fully qualified domain name (.amazonaws.com) for bucket.\n".format(uri) + "The bucket repo should be specified as 'deb s3://aptbucketname/repo/ trusty main contrib non-free'" )
 
@@ -218,7 +221,7 @@ class AWSCredentials(object):
         bucket = uri_parsed.netloc
         path = '/{}{}'.format(bucket, self._quote(uri_parsed.path, '+~ '))
 
-        s3url = urlparse.urlunparse(
+        s3url = urllib.parse.urlunparse(
             (
                 scheme,
                 host,
@@ -229,9 +232,14 @@ class AWSCredentials(object):
             )
         )
 
-        request = urllib2.Request(s3url)
+        request = urllib.request.Request(s3url)
+        # self.logging.info("chuy python3 s3url: %s", s3url)
+        # self.logging.info("chuy python3 request: %s", vars(request))
 
+        # self.logging.info("Chuy1212: %s", request.data)
         request.add_header('x-amz-content-sha256', self._payload_hash(request))
+        self.logging.info("chuy python3 request: %s", vars(request))
+
 
         # Create a date for headers and the credential string
         amzdate = datetime.datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')
@@ -275,7 +283,8 @@ class AWSCredentials(object):
 
     def _canonical_request(self, request, host, amzdate):
 
-        canonical_uri = urlparse.unquote(request.get_selector())
+        canonical_uri = urllib.parse.unquote(request.selector)
+        # self.logging.info("chuy python3 canonical uri: %s", canonical_uri)
         # handle s3api unsafe characters to support '0:0.0.0~stringYYYYMMDDHHmm' versioning.
         canonical_uri = self._quote(canonical_uri, ':+')
         canonical_querystring = ''
@@ -294,7 +303,7 @@ class AWSCredentials(object):
                             + self._signed_headers() + '\n' \
                             + self._payload_hash(request)
 
-        return hashlib.sha256(canonical_request).hexdigest()
+        return hashlib.sha256(canonical_request.encode('utf-8')).hexdigest()
 
     def _signed_headers(self):
         signed_headers = 'host;x-amz-content-sha256;x-amz-date'
@@ -303,11 +312,13 @@ class AWSCredentials(object):
         return signed_headers
 
     def _payload_hash(self, request):
-        payload = request.get_data()
-        if payload is None:
-            payload = ''
+        payload = ''
+        try:
+            payload = request.data()
+        except Exception as e:
+            self.logging.error("chuy python3 exception: %s", e)
 
-        return hashlib.sha256(payload).hexdigest()
+        return hashlib.sha256(payload.encode('utf-8')).hexdigest()
 
     # We need to be able to quote specific characters to support S3
     # lookups, something urllib and friends don't do easily
@@ -347,11 +358,11 @@ class APTMessage(object):
             if len(parts) != 2:
                 continue
             self.headers.append(parts)
-        return self(code, headers)
+        return self.code, self.headers
 
     def encode(self):
         result = '{0} {1}\n'.format(self.code, self.MESSAGE_CODES[self.code])
-        for item in self.headers.keys():
+        for item in list(self.headers.keys()):
             if self.headers[item] is not None:
                 result += '{0}: {1}\n'.format(item, self.headers[item])
         return result + '\n'
@@ -361,6 +372,7 @@ class S3_method(object):
     __eof = False
 
     def __init__(self, config_file='/etc/apt/s3auth.conf'):
+        self.logging = logging
         self.iam = AWSCredentials(config_file)
         self.iam.get_credentials()
         self.send_capabilities()
@@ -428,13 +440,15 @@ class S3_method(object):
             if message['_number'] == 601:
                 try:
                     self.configure(message)
-                except Exception, e:
+                except Exception as e:
                     self.fail(e.__class__.__name__ + ": " + str(e))
+                    # raise Exception("chuy555: %s" % e)
             elif message['_number'] == 600:
                 try:
                     self.fetch(message)
-                except Exception, e:
+                except Exception as e:
                     self.fail(e.__class__.__name__ + ": " + str(e))
+                    # raise Exception("chuy666: %s" % e)
             else:
                 return 100
 
@@ -471,7 +485,8 @@ class S3_method(object):
                     time.sleep(wait_time(i + 1))
                     continue
                 else:
-                    raise e
+                    #raise e
+                    raise Exception("chuy666 %s" % e)
             except socket.timeout:
                 time.sleep(wait_time(i + 1))
                 continue
@@ -492,7 +507,8 @@ class S3_method(object):
                     if 'timed out' in e.message:
                         pass
                     else:
-                        raise e
+                        #raise e
+                        raise Exception("chuy7777 + %s" % e)
                 except socket.timeout:
                     pass
                 finally:
@@ -502,8 +518,8 @@ class S3_method(object):
 
             self.send_uri_start({
                 'URI': self.uri,
-                'Size': response.headers.getheader('content-length'),
-                'Last-Modified': response.headers.getheader('last-modified')})
+                'Size': response.headers['content-length'],
+                'Last-Modified': response.headers['last-modified']})
 
             f = open(self.filename, "w")
             hash_sha256 = hashlib.sha256()
@@ -517,13 +533,14 @@ class S3_method(object):
                     hash_sha256.update(data)
                     hash_sha512.update(data)
                     hash_md5.update(data)
-                    f.write(data)
+                    f.write(data.decode('utf-8'))
                 break
             except ssl.SSLError as e:
                 if 'timed out' in e.message:
                     time.sleep(wait_time(i + 1))
                 else:
-                    raise e
+                    #raise e
+                    raise Exception("chuy8888: %s" % e)
             except socket.timeout:
                 time.sleep(wait_time(i + 1))
 
@@ -537,12 +554,13 @@ class S3_method(object):
         self.send_uri_done({
             'URI': self.uri,
             'Filename': self.filename,
-            'Size': response.headers.getheader('content-length'),
-            'Last-Modified': response.headers.getheader('last-modified'),
+            'Size': response.headers['content-length'],
+            'Last-Modified': response.headers['last-modified'],
             'MD5-Hash': hash_md5.hexdigest(),
             'MD5Sum-Hash': hash_md5.hexdigest(),
             'SHA256-Hash': hash_sha256.hexdigest(),
             'SHA512-Hash': hash_sha512.hexdigest()})
+
 
 if __name__ == '__main__':
     try:
