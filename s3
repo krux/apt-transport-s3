@@ -88,6 +88,7 @@ class AWSCredentials(object):
             AccessKeyId = mykey
             SecretAccessKey = mysecretkey
             Token = '' # this can/have to be empty
+            Debug = False # defaults to False if it's not defined
         """
 
         # Checking if 'file' exists, if it does read it
@@ -117,20 +118,30 @@ class AWSCredentials(object):
         except Exception as e:
             pass
 
+        # Looking for a Debug flag in our config file
+        if 'Debug' in data['auth']:
+            self.debug = data['auth']['Debug']
+        else:
+            self.debug = False
+
         self.region = self.sanitize(data['auth']['Region'])
         if self.region is None or self.region == '':
             raise Exception("Region required")
-        sys.stderr.write("Region: {}\n".format(self.region))
+
+        if self.debug:
+            sys.stderr.write("Region: {}\n".format(self.region))
 
         if data['auth']['AccessKeyId'] is not None:
-            sys.stderr.write("Using config file for credentials\n")
+            if self.debug:
+                sys.stderr.write("Using config file for credentials\n")
 
         if data['auth']['AccessKeyId'] is None:
             data['auth']['AccessKeyId'] = os.environ.get("AWS_ACCESS_KEY_ID", None)
             data['auth']['SecretAccessKey'] = os.environ.get("AWS_SECRET_ACCESS_KEY", None)
             data['auth']['Token'] = os.environ.get("AWS_SESSION_TOKEN", None)
             if data['auth']['AccessKeyId'] is not None:
-                sys.stderr.write("Using environment variables for credentials\n")
+                if self.debug:
+                    sys.stderr.write("Using environment variables for credentials\n")
 
         if data['auth']['AccessKeyId'] is None:
             self.__get_role()
@@ -173,8 +184,11 @@ class AWSCredentials(object):
 
         self.token = self.sanitize(data['auth']['Token'])
 
-    def sanitize(self, v):
-        return v.replace("\'", "")
+    def sanitize(self, san):
+        # Looking for single quote (') mark
+        if "\'" in san:
+            san = san.replace("\'", "")
+        return san
 
     def v4Sign(self, key, msg):
         return hmac.new(key, msg.encode('utf-8'), hashlib.sha256).digest()
