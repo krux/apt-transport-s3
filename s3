@@ -128,11 +128,11 @@ class AWSCredentials(object):
         if self.region is None or self.region == '':
             raise Exception("Region required")
 
-        if self.debug:
+        if self.debug is False:
             sys.stderr.write("Region: {}\n".format(self.region))
 
         if data['auth']['AccessKeyId'] is not None:
-            if self.debug:
+            if self.debug is False:
                 sys.stderr.write("Using config file for credentials\n")
 
         if data['auth']['AccessKeyId'] is None:
@@ -140,7 +140,7 @@ class AWSCredentials(object):
             data['auth']['SecretAccessKey'] = os.environ.get("AWS_SECRET_ACCESS_KEY", None)
             data['auth']['Token'] = os.environ.get("AWS_SESSION_TOKEN", None)
             if data['auth']['AccessKeyId'] is not None:
-                if self.debug:
+                if self.debug is False:
                     sys.stderr.write("Using environment variables for credentials\n")
 
         if data['auth']['AccessKeyId'] is None:
