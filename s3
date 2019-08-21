@@ -16,11 +16,11 @@
 #
 # https://github.com/BashtonLtd/apt-transport-s3
 
+import configparser
 import datetime
 import hashlib
 import hmac
 import json
-import logging
 import os
 import socket
 import ssl
@@ -31,11 +31,6 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 
-from configobj import ConfigObj
-
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                    filename="/tmp/apt-transport-s3.out",
-                    level=logging.DEBUG)
 
 RETRIES = 5
 
@@ -51,7 +46,6 @@ class AWSCredentials(object):
     """
 
     def __init__(self, config_file=None):
-        self.logging = logging
         self.conf_file = config_file
         host = 'http://169.254.169.254'
         path = '/latest/meta-data/iam/security-credentials/'
@@ -72,13 +66,13 @@ class AWSCredentials(object):
                 if 'timed out' in e.message:
                     time.sleep(wait_time(i + 1))
                 else:
-                    #raise e
-                    raise Exception("chuy111 %s" % e)
+                    raise e
             except socket.timeout:
                 time.sleep(wait_time(i + 1))
             except urllib.error.URLError as e:
                 if hasattr(e, 'reason'):
-                    raise Exception("URL error reason: %s, probable cause is that you don't have IAM role on this machine" % e.reason)
+                    raise Exception("URL error reason: %s, probable cause is that you don't have IAM role on this",
+                                    "machine" % e.reason)
                 elif hasattr(e, 'code'):
                     raise Exception("Server error code: %s" % e.code)
             finally:
@@ -98,8 +92,15 @@ class AWSCredentials(object):
 
         # Checking if 'file' exists, if it does read it
         if os.path.isfile(os.path.expanduser(self.conf_file)):
-            config = ConfigObj(os.path.expanduser(self.conf_file))
-            return config
+            # Configparser is included in the python3 standard library so use that
+            parser = configparser.ConfigParser()
+
+            # Configparser requires a header section which our config doesn't have so we add it - [auth]
+            with open(self.conf_file, 'r') as f:
+                config_string = '[auth]\n' + f.read()
+
+            parser.read_string(config_string)
+            return parser
         else:
             raise Exception("Config file: %s doesn't exist" % self.conf_file)
 
@@ -113,25 +114,25 @@ class AWSCredentials(object):
 
         try:
             data = self.__load_config()
-        except:
+        except Exception as e:
             pass
 
-        self.region = data.get('Region', 'us-east-1')
+        self.region = self.sanitize(data['auth']['Region'])
         if self.region is None or self.region == '':
             raise Exception("Region required")
         sys.stderr.write("Region: {}\n".format(self.region))
 
-        if data.get("AccessKeyId") is not None:
+        if data['auth']['AccessKeyId'] is not None:
             sys.stderr.write("Using config file for credentials\n")
 
-        if data.get("AccessKeyId") is None:
-            data['AccessKeyId'] = os.environ.get("AWS_ACCESS_KEY_ID", None)
-            data['SecretAccessKey'] = os.environ.get("AWS_SECRET_ACCESS_KEY", None)
-            data['Token'] = os.environ.get("AWS_SESSION_TOKEN", None)
-            if data.get("AccessKeyId") is not None:
+        if data['auth']['AccessKeyId'] is None:
+            data['auth']['AccessKeyId'] = os.environ.get("AWS_ACCESS_KEY_ID", None)
+            data['auth']['SecretAccessKey'] = os.environ.get("AWS_SECRET_ACCESS_KEY", None)
+            data['auth']['Token'] = os.environ.get("AWS_SESSION_TOKEN", None)
+            if data['auth']['AccessKeyId'] is not None:
                 sys.stderr.write("Using environment variables for credentials\n")
 
-        if data.get("AccessKeyId") is None:
+        if data['auth']['AccessKeyId'] is None:
             self.__get_role()
             request = urllib.request.Request(
                 urllib.parse.urljoin(self.meta_data_uri, self.iamrole)
@@ -148,8 +149,7 @@ class AWSCredentials(object):
                     if 'timed out' in e.message:
                         time.sleep(wait_time(i + 1))
                     else:
-                        #raise e
-                        raise Exception("chuy2222: %s" % e)
+                        raise e
                 except socket.timeout:
                     time.sleep(wait_time(i + 1))
                 except urllib.error.URLError as e:
@@ -163,15 +163,18 @@ class AWSCredentials(object):
             else:
                 raise Exception("GetCredentials request timed out")
 
-        self.access_key = data['AccessKeyId']
+        self.access_key = data['auth']['AccessKeyId']
         if self.access_key is None or self.access_key == '':
             raise Exception("AccessKeyId required")
 
-        self.secret_key = data['SecretAccessKey']
+        self.secret_key = data['auth']['SecretAccessKey']
         if self.secret_key is None or self.secret_key == '':
             raise Exception("SecretAccessKey required")
 
-        self.token = data['Token']
+        self.token = self.sanitize(data['auth']['Token'])
+
+    def sanitize(self, v):
+        return v.replace("\'", "")
 
     def v4Sign(self, key, msg):
         return hmac.new(key, msg.encode('utf-8'), hashlib.sha256).digest()
@@ -195,7 +198,7 @@ class AWSCredentials(object):
                 # token errors are buried in 400 messages so expose
                 xmlResponse = ET.fromstring(e.read())
                 if xmlResponse is not None:
-                    e.msg = "chuy333 {} - {}".format(e, xmlResponse.find("Message").text)
+                    e.msg = "{} - {}".format(e, xmlResponse.find("Message").text)
             if e.code == 301:
                 e.msg = "{} - Set s3auth.conf region to match bucket 'Region': bucket may not be in {}".format(e, self.region)
 
@@ -233,13 +236,8 @@ class AWSCredentials(object):
         )
 
         request = urllib.request.Request(s3url)
-        # self.logging.info("chuy python3 s3url: %s", s3url)
-        # self.logging.info("chuy python3 request: %s", vars(request))
 
-        # self.logging.info("Chuy1212: %s", request.data)
         request.add_header('x-amz-content-sha256', self._payload_hash(request))
-        self.logging.info("chuy python3 request: %s", vars(request))
-
 
         # Create a date for headers and the credential string
         amzdate = datetime.datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')
@@ -284,7 +282,6 @@ class AWSCredentials(object):
     def _canonical_request(self, request, host, amzdate):
 
         canonical_uri = urllib.parse.unquote(request.selector)
-        # self.logging.info("chuy python3 canonical uri: %s", canonical_uri)
         # handle s3api unsafe characters to support '0:0.0.0~stringYYYYMMDDHHmm' versioning.
         canonical_uri = self._quote(canonical_uri, ':+')
         canonical_querystring = ''
@@ -316,7 +313,7 @@ class AWSCredentials(object):
         try:
             payload = request.data()
         except Exception as e:
-            self.logging.error("chuy python3 exception: %s", e)
+            pass
 
         return hashlib.sha256(payload.encode('utf-8')).hexdigest()
 
@@ -372,7 +369,6 @@ class S3_method(object):
     __eof = False
 
     def __init__(self, config_file='/etc/apt/s3auth.conf'):
-        self.logging = logging
         self.iam = AWSCredentials(config_file)
         self.iam.get_credentials()
         self.send_capabilities()
@@ -442,13 +438,11 @@ class S3_method(object):
                     self.configure(message)
                 except Exception as e:
                     self.fail(e.__class__.__name__ + ": " + str(e))
-                    # raise Exception("chuy555: %s" % e)
             elif message['_number'] == 600:
                 try:
                     self.fetch(message)
                 except Exception as e:
                     self.fail(e.__class__.__name__ + ": " + str(e))
-                    # raise Exception("chuy666: %s" % e)
             else:
                 return 100
 
@@ -485,8 +479,7 @@ class S3_method(object):
                     time.sleep(wait_time(i + 1))
                     continue
                 else:
-                    #raise e
-                    raise Exception("chuy666 %s" % e)
+                    raise e
             except socket.timeout:
                 time.sleep(wait_time(i + 1))
                 continue
@@ -507,8 +500,7 @@ class S3_method(object):
                     if 'timed out' in e.message:
                         pass
                     else:
-                        #raise e
-                        raise Exception("chuy7777 + %s" % e)
+                        raise e
                 except socket.timeout:
                     pass
                 finally:
@@ -539,8 +531,7 @@ class S3_method(object):
                 if 'timed out' in e.message:
                     time.sleep(wait_time(i + 1))
                 else:
-                    #raise e
-                    raise Exception("chuy8888: %s" % e)
+                    raise e
             except socket.timeout:
                 time.sleep(wait_time(i + 1))
 
