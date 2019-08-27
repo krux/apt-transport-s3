@@ -527,7 +527,7 @@ class S3_method(object):
                 'Size': response.headers['content-length'],
                 'Last-Modified': response.headers['last-modified']})
 
-            f = open(self.filename, "w")
+            f = open(self.filename, "w", encoding="ISO-8859-1")
             hash_sha256 = hashlib.sha256()
             hash_sha512 = hashlib.sha512()
             hash_md5 = hashlib.md5()
@@ -539,7 +539,7 @@ class S3_method(object):
                     hash_sha256.update(data)
                     hash_sha512.update(data)
                     hash_md5.update(data)
-                    f.write(data.decode('utf-8'))
+                    f.write(data.decode('ISO-8859-1'))
                 break
             except ssl.SSLError as e:
                 if 'timed out' in e.message:
